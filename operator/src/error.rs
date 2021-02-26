@@ -23,6 +23,13 @@ pub enum Error {
         backtrace: Backtrace,
     },
 
+    #[error("Error from reqwest: {source}")]
+    ReqwestError {
+        #[from]
+        source: reqwest::Error,
+        backtrace: Backtrace,
+    },
+
     #[error("Pod contains invalid node type: {source}")]
     InvalidNodeType {
         #[from]

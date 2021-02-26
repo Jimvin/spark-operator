@@ -1,4 +1,5 @@
 #![feature(backtrace)]
+mod cluster_state;
 mod config;
 mod error;
 
@@ -399,6 +400,23 @@ impl SparkState {
             if let Some(current_version) = &status.current_version {
                 // id 2 -> update
                 // TODO: graceful -> wait for all spark jobs to be finished
+                // check for running applications
+                let master_urls = config::get_master_urls(
+                    &self.spec.master,
+                    Some("http://".to_string()),
+                    Some("/json".to_string()),
+                    true,
+                );
+                let running_apps = cluster_state::get_running_applications(master_urls).await?;
+                // TODO: graceful option set?
+                if !running_apps.is_empty() {
+                    error!(
+                        "Graceful updates activated: Wait for spark jobs {:?} to finish.",
+                        running_apps
+                    );
+                    return Ok(ReconcileFunctionAction::Requeue(Duration::from_secs(10)));
+                }
+
                 if current_version != &self.spec.version && status.target_version.is_none() {
                     let new_status = &SparkClusterStatus {
                         current_version: Some(current_version.clone()),

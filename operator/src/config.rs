@@ -1,10 +1,11 @@
+use core::fmt;
 use k8s_openapi::api::core::v1::{ConfigMapVolumeSource, EnvVar, Volume, VolumeMount};
 use stackable_spark_crd::{
     ConfigOption, SparkClusterSpec, SparkNode, SparkNodeSelector, SparkNodeType,
 };
 use std::collections::HashMap;
 
-const SPARK_URL_START: &str = "spark://";
+const SPARK_PROTOCOL: &str = "spark://";
 
 // basic for startup
 const SPARK_NO_DAEMONIZE: &str = "SPARK_NO_DAEMONIZE";
@@ -15,9 +16,10 @@ const SPARK_EVENT_LOG_DIR: &str = "spark.eventLog.dir";
 const SPARK_AUTHENTICATE: &str = "spark.authenticate";
 const SPARK_AUTHENTICATE_SECRET: &str = "spark.authenticate.secret";
 // master
-const SPARK_MASTER_PORT_ENV: &str = "SPARK_MASTER_PORT";
 const SPARK_MASTER_PORT_CONF: &str = "spark.master.port";
-const SPARK_MASTER_WEBUI_PORT: &str = "SPARK_MASTER_WEBUI_PORT";
+const SPARK_MASTER_PORT_ENV: &str = "SPARK_MASTER_PORT";
+const SPARK_MASTER_WEBUI_PORT_CONF: &str = "spark.master.webui.port";
+const SPARK_MASTER_WEBUI_PORT_ENV: &str = "SPARK_MASTER_WEBUI_PORT";
 // worker
 const SPARK_WORKER_CORES: &str = "SPARK_WORKER_CORES";
 const SPARK_WORKER_MEMORY: &str = "SPARK_WORKER_MEMORY";
@@ -28,11 +30,38 @@ const SPARK_HISTORY_FS_LOG_DIRECTORY: &str = "spark.history.fs.logDirectory";
 const SPARK_HISTORY_STORE_PATH: &str = "spark.history.store.path";
 const SPARK_HISTORY_UI_PORT: &str = "spark.history.ui.port";
 
+pub struct SparkNodeUrl {
+    pub protocol: Option<String>,
+    pub host: String,
+    pub port: String,
+    pub path: Option<String>,
+}
+
+impl fmt::Display for SparkNodeUrl {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut str = String::new();
+        if let Some(protocol) = &self.protocol {
+            str.push_str(protocol);
+        }
+
+        str.push_str(&self.host);
+        str.push(':');
+        str.push_str(&self.port);
+
+        if let Some(path) = &self.path {
+            if !path.starts_with('/') {
+                str.push('/');
+            }
+            str.push_str(path);
+        }
+
+        write!(f, "{}", str)
+    }
+}
+
 /// The worker start command needs to be extended with all known master nodes and ports.
 /// The required URLs are in format: 'spark://<master-node-name>:<master-port'
 /// Multiple masters are separated via ','
-/// The master port can be configured and needs to be checked in config / env or general options.
-/// Defaults to 7077 if no port is specified.
 ///
 /// # Arguments
 /// * `node_type` - SparkNodeType (master/worker/history-server)
@@ -44,56 +73,109 @@ pub fn adapt_container_command(node_type: &SparkNodeType, master: &SparkNode) ->
     if node_type != &SparkNodeType::Worker {
         return None;
     }
-    // get all available master selectors
-    for selector in &master.selectors {
-        // check in conf properties and env variables for port
-        // conf properties have higher priority than env variables
-        if let Some(conf) = &selector.config {
-            if let Some(master) =
-                search_master_port(&selector.node_name, SPARK_MASTER_PORT_CONF, conf)
-            {
-                master_url.push_str(master.as_str());
-                continue;
-            }
-        } else if let Some(env) = &selector.env {
-            if let Some(master) =
-                search_master_port(&selector.node_name, SPARK_MASTER_PORT_ENV, env)
-            {
-                master_url.push_str(master.as_str());
-                continue;
-            }
-        } else if let Some(port) = selector.master_port {
-            master_url
-                .push_str(format!("{}{}:{},", SPARK_URL_START, selector.node_name, port).as_str());
-            continue;
-        }
 
-        // TODO: default to default value in product conf
-        master_url
-            .push_str(format!("{}{}:{},", SPARK_URL_START, selector.node_name, "7077").as_str());
+    let urls = get_master_urls(master, Some(SPARK_PROTOCOL.to_string()), None, false);
+
+    for url in urls {
+        if !master_url.is_empty() {
+            master_url.push(',');
+        }
+        master_url.push_str(&url.to_string());
     }
 
     Some(master_url)
 }
 
+/// Get master url consisting of node_name and port
+/// The master port can be configured and needs to be checked in config / env or selector options.
+/// Defaults to 7077 if no port is specified.
+///
+/// # Arguments
+/// * `master` - Master SparkNode containing the required settings
+/// * `protocol` - Some protocol like "http://" or "spark://"
+/// * `path` - sub url/path to be appended after the port
+/// * `web_ui` - weather ports are collected for the master or master web ui
+///
+pub fn get_master_urls(
+    master: &SparkNode,
+    protocol: Option<String>,
+    path: Option<String>,
+    web_ui: bool,
+) -> Vec<SparkNodeUrl> {
+    let mut master_urls = vec![];
+    let default_port: &str;
+    let mut properties = vec![];
+    // TODO: get default ports from config
+    if web_ui {
+        default_port = "8080";
+        properties.push(SPARK_MASTER_WEBUI_PORT_CONF);
+        properties.push(SPARK_MASTER_WEBUI_PORT_ENV);
+    } else {
+        default_port = "7077";
+        properties.push(SPARK_MASTER_PORT_CONF);
+        properties.push(SPARK_MASTER_PORT_ENV);
+    }
+
+    // get all available master selectors
+    'selector: for selector in &master.selectors {
+        // check in conf properties and env variables for port
+        // conf properties have higher priority than env variables
+        for property in &properties {
+            if let Some(conf) = &selector.config {
+                if let Some(port) = get_master_port(property, conf) {
+                    master_urls.push(SparkNodeUrl {
+                        protocol: protocol.clone(),
+                        host: selector.node_name.clone(),
+                        port,
+                        path: path.clone(),
+                    });
+                    continue 'selector;
+                }
+            }
+        }
+
+        // search in selector
+        if web_ui {
+            if let Some(port) = selector.master_web_ui_port {
+                master_urls.push(SparkNodeUrl {
+                    protocol: protocol.clone(),
+                    host: selector.node_name.clone(),
+                    port: port.to_string(),
+                    path: path.clone(),
+                });
+                continue;
+            }
+        } else if let Some(port) = selector.master_port {
+            master_urls.push(SparkNodeUrl {
+                protocol: protocol.clone(),
+                host: selector.node_name.clone(),
+                port: port.to_string(),
+                path: path.clone(),
+            });
+            continue;
+        }
+
+        // use default port
+        master_urls.push(SparkNodeUrl {
+            protocol: protocol.clone(),
+            host: selector.node_name.clone(),
+            port: default_port.to_string(),
+            path: path.clone(),
+        });
+    }
+    master_urls
+}
+
 /// Search for a master port in config properties or env variables
 ///
 /// # Arguments
-/// * `node_name` - Node IP / DNS address
 /// * `option_name` - Name of the option to look for e.g. "SPARK_MASTER_PORT"
 /// * `options` - Vec of config properties or env variables
 ///
-fn search_master_port(
-    node_name: &str,
-    option_name: &str,
-    options: &[ConfigOption],
-) -> Option<String> {
+fn get_master_port(option_name: &str, options: &[ConfigOption]) -> Option<String> {
     for option in options {
         if option.name == option_name {
-            return Some(format!(
-                "{}{}:{},",
-                SPARK_URL_START, node_name, option.value
-            ));
+            return Some(option.value.clone());
         }
     }
     None
@@ -234,7 +316,10 @@ pub fn get_env_variables(selector: &SparkNodeSelector) -> HashMap<String, String
         config.insert(SPARK_MASTER_PORT_ENV.to_string(), port.to_string());
     }
     if let Some(web_ui_port) = &selector.master_web_ui_port {
-        config.insert(SPARK_MASTER_WEBUI_PORT.to_string(), web_ui_port.to_string());
+        config.insert(
+            SPARK_MASTER_WEBUI_PORT_ENV.to_string(),
+            web_ui_port.to_string(),
+        );
     }
 
     // worker
