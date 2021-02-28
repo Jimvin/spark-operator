@@ -399,9 +399,9 @@ impl SparkState {
 
             if let Some(current_version) = &status.current_version {
                 // id 2 -> update
-                // TODO: graceful -> wait for all spark jobs to be finished
-                // check for running applications
+
                 let master_urls = config::get_master_urls(
+                    // TODO: adapt for https
                     &self.spec.master,
                     Some("http://".to_string()),
                     Some("/json".to_string()),
