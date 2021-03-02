@@ -1,6 +1,8 @@
+use crate::config;
 use crate::config::SparkNodeUrl;
 use reqwest::Error;
 use serde::Deserialize;
+use stackable_spark_crd::SparkNode;
 use tracing::error;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -57,6 +59,34 @@ pub enum SparkApplicationState {
     WAITING,
 }
 
+/// Check if any applications are running in the cluster
+///
+/// # Arguments
+///
+/// * `master` - SparkNode from spec
+///
+pub async fn applications_running(master: &SparkNode) -> Result<bool, Error> {
+    let master_urls = config::get_master_urls(
+        // TODO: adapt for https
+        // TODO: remove hardcoded
+        master,
+        Some("http://".to_string()),
+        Some("/json".to_string()),
+        true,
+    );
+    let running_apps = get_running_applications(master_urls).await?;
+    // TODO: graceful option set?
+    if !running_apps.is_empty() {
+        error!(
+            "Graceful updates activated: Wait for spark jobs {:?} to finish.",
+            running_apps
+        );
+
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 /// Request all master urls in the form of http(s)://master_url:master_port/json
 ///
 /// # Arguments
@@ -102,7 +132,7 @@ async fn request_states(master_urls: Vec<SparkNodeUrl>) -> Result<Vec<SparkMaste
 ///
 /// * `master_urls` - List of all available master_urls or just the leader
 ///
-pub async fn get_running_applications(
+async fn get_running_applications(
     master_urls: Vec<SparkNodeUrl>,
 ) -> Result<Vec<SparkApplication>, Error> {
     let mut running_applications = vec![];

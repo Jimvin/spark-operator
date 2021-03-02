@@ -248,21 +248,7 @@ impl SparkState {
                 // We'll check if there is a different version in spec and if it is will set it in target_version.
 
                 // graceful -> check if any jobs are currently running
-                let master_urls = config::get_master_urls(
-                    // TODO: adapt for https
-                    // TODO: remove hardcoded
-                    &self.spec.master,
-                    Some("http://".to_string()),
-                    Some("/json".to_string()),
-                    true,
-                );
-                let running_apps = cluster_state::get_running_applications(master_urls).await?;
-                // TODO: graceful option set?
-                if !running_apps.is_empty() {
-                    error!(
-                        "Graceful updates activated: Wait for spark jobs {:?} to finish.",
-                        running_apps
-                    );
+                if cluster_state::applications_running(&self.spec.master).await? {
                     // TODO: Requeue or continue?
                     // what if during a long running spark app workers fail -> we should continue with reconcile
                     return Ok(ReconcileFunctionAction::Continue);
