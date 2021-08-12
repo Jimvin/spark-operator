@@ -37,9 +37,11 @@ pub fn filter_pods_for_type(pods: &[Pod], node_type: &SparkRole) -> Vec<Pod> {
     let mut filtered_pods = Vec::new();
 
     for pod in pods {
-        if let Some(component) = pod.metadata.labels.get(labels::APP_COMPONENT_LABEL) {
-            if component == &node_type.to_string() {
-                filtered_pods.push(pod.clone());
+        if let Some(labels) = &pod.metadata.labels {
+            if let Some(component) = labels.get(labels::APP_COMPONENT_LABEL) {
+                if component == &node_type.to_string() {
+                    filtered_pods.push(pod.clone());
+                }
             }
         }
     }

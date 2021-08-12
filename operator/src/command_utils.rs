@@ -404,7 +404,13 @@ fn is_command_done<T>(command: &T) -> bool
 where
     T: Resource,
 {
-    command.meta().labels.get(COMMAND_STATUS_LABEL) == Some(&COMMAND_STATUS_VALUE.to_string())
+    if let Some(labels) = &command.meta().labels {
+        if labels.get(COMMAND_STATUS_LABEL) == Some(&COMMAND_STATUS_VALUE.to_string()) {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Retrieve a timestamp in format: "2021-03-23T16:20:19Z".

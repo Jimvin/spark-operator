@@ -82,9 +82,14 @@ pub fn get_master_urls(
     let mut master_urls = Vec::new();
 
     for pod in pods {
+        let labels = match &pod.metadata.labels {
+            Some(labels) => labels,
+            None => continue,
+        };
+
         if let (Some(role), Some(group)) = (
-            pod.metadata.labels.get(APP_COMPONENT_LABEL),
-            pod.metadata.labels.get(APP_ROLE_GROUP_LABEL),
+            labels.get(APP_COMPONENT_LABEL),
+            labels.get(APP_ROLE_GROUP_LABEL),
         ) {
             if role != &SparkRole::Master.to_string() {
                 continue;

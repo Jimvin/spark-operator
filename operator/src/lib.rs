@@ -701,10 +701,15 @@ impl SparkState {
         );
 
         for pod in &worker_pods {
+            let labels = match &pod.metadata.labels {
+                Some(labels) => labels,
+                None => continue,
+            };
+
             if let (Some(label_hashed_master_urls), Some(role), Some(group)) = (
-                pod.metadata.labels.get(pod_utils::MASTER_URLS_HASH_LABEL),
-                pod.metadata.labels.get(APP_COMPONENT_LABEL),
-                pod.metadata.labels.get(APP_ROLE_GROUP_LABEL),
+                labels.get(pod_utils::MASTER_URLS_HASH_LABEL),
+                labels.get(APP_COMPONENT_LABEL),
+                labels.get(APP_ROLE_GROUP_LABEL),
             ) {
                 if label_hashed_master_urls != &current_hashed_master_urls {
                     debug!(

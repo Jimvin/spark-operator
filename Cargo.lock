@@ -1521,6 +1521,7 @@ dependencies = [
 name = "stackable-spark-operator-server"
 version = "0.1.0-nightly"
 dependencies = [
+ "kube",
  "serde_yaml",
  "stackable-operator",
  "stackable-spark-crd",
